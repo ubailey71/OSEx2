@@ -1,0 +1,2 @@
+/usr/bin/ar.exe qc libex2_2.a  CMakeFiles/ex2_2.dir/library.cpp.o CMakeFiles/ex2_2.dir/uthreads.cpp.o CMakeFiles/ex2_2.dir/thread.cpp.o
+/usr/bin/ranlib.exe libex2_2.a
