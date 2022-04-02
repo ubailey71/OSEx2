@@ -4,9 +4,9 @@ set(CMAKE_DEPENDS_LANGUAGES
   )
 # The set of files for implicit dependencies of each language:
 set(CMAKE_DEPENDS_CHECK_CXX
-  "/cygdrive/c/Users/Uri Bailey/CLionProjects/ex2.2/library.cpp" "/cygdrive/c/Users/Uri Bailey/CLionProjects/ex2.2/cmake-build-debug/CMakeFiles/ex2_2.dir/library.cpp.o"
-  "/cygdrive/c/Users/Uri Bailey/CLionProjects/ex2.2/thread.cpp" "/cygdrive/c/Users/Uri Bailey/CLionProjects/ex2.2/cmake-build-debug/CMakeFiles/ex2_2.dir/thread.cpp.o"
-  "/cygdrive/c/Users/Uri Bailey/CLionProjects/ex2.2/uthreads.cpp" "/cygdrive/c/Users/Uri Bailey/CLionProjects/ex2.2/cmake-build-debug/CMakeFiles/ex2_2.dir/uthreads.cpp.o"
+  "/cygdrive/c/Users/Uri Bailey/CLionProjects/OSEx2/library.cpp" "/cygdrive/c/Users/Uri Bailey/CLionProjects/OSEx2/cmake-build-debug/CMakeFiles/ex2_2.dir/library.cpp.o"
+  "/cygdrive/c/Users/Uri Bailey/CLionProjects/OSEx2/thread.cpp" "/cygdrive/c/Users/Uri Bailey/CLionProjects/OSEx2/cmake-build-debug/CMakeFiles/ex2_2.dir/thread.cpp.o"
+  "/cygdrive/c/Users/Uri Bailey/CLionProjects/OSEx2/uthreads.cpp" "/cygdrive/c/Users/Uri Bailey/CLionProjects/OSEx2/cmake-build-debug/CMakeFiles/ex2_2.dir/uthreads.cpp.o"
   )
 set(CMAKE_CXX_COMPILER_ID "GNU")
 
