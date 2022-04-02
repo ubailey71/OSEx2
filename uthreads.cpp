@@ -17,24 +17,23 @@
 
 class ThreadManager {
 public:
-    int cur_quantum;
-    int quantum_length;
     std::vector<Thread *> threads;
     std::map<int, std::vector<int>*> wake_up_calls;
     std::deque<int> ready;
     std::set<int> vacantIndices;
+    int current_active_thread;
 
 
     explicit ThreadManager(int quantum_length) {
-        this->cur_quantum = 0;
-        this->quantum_length = quantum_length;
         this->threads = std::vector<Thread *>();
         this->ready = std::deque<int>();
         this->vacantIndices = std::set<int>();
         this->wake_up_calls = std::map<int,  std::vector<int>*>();
+        this-> current_active_thread = -1;
     }
 
     void time_handler(int sig){
+        // todo - fine's part goes here - see the use of current_active_thread
         printf("got sigvtalrm");
         if(ready.empty()) return;
         else{}
@@ -107,15 +106,6 @@ int uthread_terminate(int tid) {
     return manager->terminate(tid);
 }
 
-/**
- * @brief Blocks the thread with ID tid. The thread may be resumed later using uthread_resume.
- *
- * If no thread with ID tid exists it is considered as an error. In addition, it is an error to try blocking the
- * main thread (tid == 0). If a thread blocks itself, a scheduling decision should be made. Blocking a thread in
- * BLOCKED state has no effect and is not considered an error.
- *
- * @return On success, return 0. On failure, return -1.
-*/
 int uthread_block(int tid){
 
 }
