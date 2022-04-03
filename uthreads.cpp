@@ -11,9 +11,19 @@
 #include <algorithm>
 #include <sys/time.h>
 #include <iostream>
+#include <stdio.h>
+#include <setjmp.h>
+#include <signal.h>
+#include <unistd.h>
+#include <sys/time.h>
+#include <stdbool.h>
+
+
+
 
 #define FAIL -1
 #define SUCCESS 0
+#define SCHEDULE 2
 
 class ThreadManager {
 public:
@@ -33,25 +43,54 @@ public:
     }
 
     void time_handler(int sig, int cur_quantum) {
-        // todo - fine's part goes here - see the use of current_active_thread
         wake_up_all(cur_quantum);
         if (ready.empty()) return;
-        else {}
+        else {
+            this->rr_cycle();
+        }
     }
 
-    int add(thread_entry_point entry_point) {
-        Thread *new_thread = new Thread(entry_point);
+    int add(thread_entry_point entry_point,bool is_main = false) {
         int index = get_next_index();
+        Thread *new_thread = new Thread(entry_point,READY, is_main);
         if (index == MAX_THREAD_NUM) return FAIL;
         if (index == threads.size()) threads.push_back(new_thread); else threads[index] = new_thread;
         add_to_ready(index);
         return SUCCESS;
     }
 
+    int rr_cycle() {
+        Thread *curr_thread = this->threads[this->current_active_thread];
+        if (curr_thread->curr_state()==RUNNING)
+        {
+            curr_thread->preempt();
+            this->add_to_ready(this->current_active_thread);
+        }
+        int res = curr_thread->save_thread();
+        // If thread just saved, load next thread;
+        if(res==SUCCESS)
+        {
+            this->current_active_thread = this->ready.front();
+            this->ready.pop_front();
+            curr_thread = this->threads[this->current_active_thread];
+            curr_thread->schedule();
+            curr_thread->activate_thread();
+        }
+        return SUCCESS;
+    }
+
     int block(int tid) {
         Thread *to_block = threads[tid];
         if (to_block->state != BLOCKED) erase_from_ready(tid);
-        to_block->state = BLOCKED;
+        int res = to_block->block();
+        if (res== FAIL)
+        {
+            // todo - print error
+        }
+        if (res == SCHEDULE)
+        {
+            return this->rr_cycle();
+        }
         return SUCCESS;
     }
 
@@ -66,21 +105,45 @@ public:
 
     int terminate(int tid) {
         Thread *to_terminate = threads[tid];
+        int is_over = to_terminate->terminate();
+        if (is_over==1)
+        {
+            return this->end_program();
+        }
+
+        if (to_terminate->state== RUNNING) this->rr_cycle();
         if (to_terminate->state == READY) erase_from_ready(tid);
         if (to_terminate->is_asleep) erase_from_wake_up_calls(to_terminate->wake_up_time, tid);
         threads[tid] = nullptr;
         vacantIndices.insert(tid);
-        delete (to_terminate);
+        delete to_terminate;
         return SUCCESS;
     }
 
     int put_to_sleep(int wake_up_time) {
-        Thread *to_sleep = threads[current_active_thread];
+        Thread *to_sleep = threads[this->current_active_thread];
+        int res = to_sleep->sleep(wake_up_time);
+        if (res == FAIL)
+        {
+            // todo fail
+        }
         erase_from_ready(current_active_thread);
-        to_sleep->sleep(wake_up_time);
         add_to_wake_up_calls(wake_up_time, current_active_thread);
+        if(res==2)
+        {
+            return this->rr_cycle();
+        }
         return SUCCESS;
     }
+
+        int end_program()
+        {
+            for (auto ptr: this->threads)
+            {
+                delete ptr;
+            }
+            return 2;
+        }
 
     bool is_index_vacant(int index) {
         return (index > 0 && index < MAX_THREAD_NUM && threads[index] == nullptr);
@@ -144,6 +207,9 @@ void timer_handler(int sig) {
 
 int throwError(int errorId);
 
+// todo: Handle errors, mask signals every function;
+
+
 void initTimer(int usecs) {
     timer.it_interval.tv_sec = 0;    // following time intervals, seconds part
     timer.it_interval.tv_usec = usecs;    // following time intervals, microseconds part
@@ -170,6 +236,7 @@ int uthread_init(int quantum_usecs) {
     usecs = quantum_usecs;
     quantums_passed = 1;
     manager = new ThreadManager(quantum_usecs);
+    manager->add(nullptr, true);
     return SUCCESS;
 }
 
@@ -187,7 +254,13 @@ int uthread_spawn(thread_entry_point entry_point) {
 int uthread_terminate(int tid) {
     if (!is_valid_tid(tid, false)) return throwError(1);
     if (manager->current_active_thread == tid) resetTimer();
-    return manager->terminate(tid);
+    int res = manager->terminate(tid);
+    if (res==2)
+    {
+        delete manager;
+        exit(0);
+    }
+    return res;
 }
 
 int uthread_block(int tid) {
