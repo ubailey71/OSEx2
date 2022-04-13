@@ -23,6 +23,10 @@
 #define SUCCESS 0
 #define SCHEDULE 2
 
+#define INVALID_TID_MESSAGE "received invalid thread index"
+#define MAIN_THREAD_SLEEP_MESSAGE "cannot put main thread (tid = 0) to sleep"
+#define MEMORY_ALLOCATION_FAILURE_MESSAGE "could not allocate memory for thread"
+
 #ifdef __x86_64__
 /* code for 64 bit Intel arch */
 
@@ -34,15 +38,7 @@ typedef unsigned long address_t;
    Use this as a black box in your code. */
 #ifndef COMMANDS_H_translate
 #define COMMANDS_H_translate
-address_t translate_address (address_t addr)
-{
-  address_t ret;
-  asm volatile("xor    %%fs:0x30,%0\n"
-               "rol    $0x11,%0\n"
-  : "=g" (ret)
-  : "0" (addr));
-  return ret;
-}
+
 #endif /* COMMANDS_H_ */
 #else
 /* code for 32 bit Intel arch */
@@ -76,6 +72,24 @@ address_t translate_address(address_t addr)
 enum State {
   RUNNING, BLOCKED, READY
 };
+
+enum Error_Type {
+    SYSTEM_ERROR, LIBRARY_ERROR
+};
+
+static int throwError(Error_Type type, const std::string &message) {
+    std::string prefix;
+    switch (type) {
+        case SYSTEM_ERROR:
+            prefix = "system error: ";
+            break;
+        case LIBRARY_ERROR:
+            prefix = "thread library error: ";
+            break;
+    }
+    std::cerr << prefix << message << std::endl;
+    return -1;
+}
 
 class Thread {
  public:
@@ -112,8 +126,13 @@ class Thread {
         return;
       }
     else
-      {
-        this->stack = new char[STACK_SIZE];
+      {       try{
+                this->stack = new char[STACK_SIZE];
+            }catch (...) {
+                throwError(SYSTEM_ERROR, MEMORY_ALLOCATION_FAILURE_MESSAGE);
+                return;
+            }
+        
         address_t sp = (address_t) stack + STACK_SIZE - sizeof (address_t);
         address_t pc = (address_t) costume_entry;
         (this->env->__jmpbuf)[JB_SP] = translate_address (sp);
@@ -246,10 +265,10 @@ class Thread {
         this->state = READY;
       }
   }
-
 };
 
 class ThreadManager {
+
  public:
   std::vector<Thread *> threads;
   std::map<int, std::vector<int> *> wake_up_calls;
@@ -524,12 +543,6 @@ void timer_handler (int sig)
   printf ("Time's up!\n");
   manager->time_handler (sig);
 }
-
-int throwError (int errorId)
-{
-  std::cout << "Throw some error" << std::endl;
-  return -1;
-};
 
 // todo: Handle errors, mask signals every function;
 
