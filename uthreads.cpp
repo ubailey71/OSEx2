@@ -24,6 +24,9 @@
 #define SUCCESS 0
 #define SCHEDULE 2
 
+#define INVALID_TID_MESSAGE "received invalid thread index"
+#define MAIN_THREAD_SLEEP_MESSAGE "cannot put main thread (tid = 0) to sleep"
+#define MEMORY_ALLOCATION_FAILURE_MESSAGE "could not allocate memory for thread"
 
 #ifdef __x86_64__
 /* code for 64 bit Intel arch */
@@ -36,15 +39,16 @@ typedef unsigned long address_t;
    Use this as a black box in your code. */
 #ifndef COMMANDS_H_translate
 #define COMMANDS_H_translate
-address_t translate_address(address_t addr)
-{
+
+address_t translate_address(address_t addr) {
     address_t ret;
     asm volatile("xor    %%fs:0x30,%0\n"
                  "rol    $0x11,%0\n"
-                 : "=g" (ret)
-                 : "0" (addr));
+    : "=g" (ret)
+    : "0" (addr));
     return ret;
 }
+
 #endif /* COMMANDS_H_ */
 #else
 /* code for 32 bit Intel arch */
@@ -79,9 +83,23 @@ enum State {
     RUNNING, BLOCKED, READY
 };
 
+enum Error_Type {
+    SYSTEM_ERROR, LIBRARY_ERROR
+};
 
-
-
+static int throwError(Error_Type type, const std::string &message) {
+    std::string prefix;
+    switch (type) {
+        case SYSTEM_ERROR:
+            prefix = "system error: ";
+            break;
+        case LIBRARY_ERROR:
+            prefix = "thread library error: ";
+            break;
+    }
+    std::cerr << prefix << message << std::endl;
+    return -1;
+}
 
 class Thread {
 public:
@@ -97,7 +115,7 @@ public:
     sigjmp_buf env;
 
     explicit Thread(thread_entry_point entry_point, State state = READY,
-                    bool is_main = false, thread_entry_point custume_entry= nullptr) {
+                    bool is_main = false, thread_entry_point custume_entry = nullptr) {
         this->entry_point = entry_point;
         this->state = state;
         this->quantums = 0;
@@ -106,14 +124,18 @@ public:
         this->stack = nullptr;
         this->is_main = is_main;
         sigsetjmp(this->env, 1);
-        if(this->is_main){
+        if (this->is_main) {
             this->state = RUNNING;
             this->quantums++;
             return;
-        }
-        else{
-            this->stack = new char[STACK_SIZE];
-            address_t sp = (address_t) stack +STACK_SIZE -sizeof (address_t);
+        } else {
+            try{
+                this->stack = new char[STACK_SIZE];
+            }catch (...) {
+                throwError(SYSTEM_ERROR, MEMORY_ALLOCATION_FAILURE_MESSAGE);
+                return;
+            }
+            address_t sp = (address_t) stack + STACK_SIZE - sizeof(address_t);
             address_t pc = (address_t) custume_entry;
             (this->env->__jmpbuf)[JB_SP] = translate_address(sp);
             (this->env->__jmpbuf)[JB_PC] = translate_address(pc);
@@ -121,41 +143,38 @@ public:
         }
     }
 
-    ~ Thread(){
+    ~ Thread() {
         delete this->stack;
     }
 
-    int save_thread(){
-        return sigsetjmp(this->env,1);
+    int save_thread() {
+        return sigsetjmp(this->env, 1);
     }
 
-    int terminate(){
-        if (this->is_main)
-        {
+    int terminate() {
+        if (this->is_main) {
             return 1;
         }
         return SUCCESS;
     }
 
-    int curr_state(){
+    int curr_state() {
         return this->state;
     }
 
-    int activate_thread(){
+    int activate_thread() {
 //        std::cout<<"Loading thread: "<<std::endl;
         siglongjmp(this->env, 1);
     }
 
     int block() {
-        if(this->is_main)
-        {
+        if (this->is_main) {
             return FAIL;
         }
 
         this->is_blocked_because_sleep = false;
 
-        if(this->state==RUNNING)
-        {
+        if (this->state == RUNNING) {
             this->state = BLOCKED;
             return 2;
         }
@@ -168,24 +187,22 @@ public:
         this->quantums++;
     }
 
-    void preempt() { this->state = READY;
+    void preempt() {
+        this->state = READY;
     }
 
     void resume() { this->state = READY; }
 
     int sleep(int wake_time) {
-        if (this->is_main)
-        {
+        if (this->is_main) {
             return FAIL;
         }
-        if((!this->state==BLOCKED))
-        {
+        if ((!this->state == BLOCKED)) {
             this->is_blocked_because_sleep = true;
         }
         this->is_asleep = true;
         this->wake_up_time = wake_time;
-        if(this->state==RUNNING)
-        {
+        if (this->state == RUNNING) {
             this->state = BLOCKED;
             return 2;
         }
@@ -196,8 +213,7 @@ public:
     void wake_up() {
         this->is_asleep = false;
         this->wake_up_time = NEVER;
-        if(this->is_blocked_because_sleep)
-        {
+        if (this->is_blocked_because_sleep) {
             this->state = READY;
         }
     }
@@ -225,14 +241,13 @@ public:
         this->quntums_passed = 1;
     }
 
-    int garbage_thread_handle()
-    {
+    int garbage_thread_handle() {
         int tid = this->garbage_thread_id;
         Thread *to_terminate = threads[tid];
         if (to_terminate->state == READY) erase_from_ready(tid);
         if (to_terminate->is_asleep) erase_from_wake_up_calls(to_terminate->wake_up_time, tid);
         this->threads[tid] = nullptr;
-        std::cout<<"Inserting vacant indice: "<<tid<<std::endl;
+        std::cout << "Inserting vacant indice: " << tid << std::endl;
         vacantIndices.insert(tid);
         delete to_terminate;
         this->garbage_thread_id = -1;
@@ -263,19 +278,16 @@ private:
             index = *vacantIndices.begin();
             vacantIndices.erase(vacantIndices.begin());
         }
-        std::cout<<"get_next idx: "<<index<<std::endl;
+        std::cout << "get_next idx: " << index << std::endl;
         return index;
     }
 
 
-
     int end_program() {
         for (auto &ptr: threads) {
-            if (!(ptr == nullptr))
-            {
-                if(ptr->is_main)
-                {
-                    std::cout<<"Deleting main thread and finishing"<<std::endl;
+            if (!(ptr == nullptr)) {
+                if (ptr->is_main) {
+                    std::cout << "Deleting main thread and finishing" << std::endl;
                 }
                 delete ptr;
             }
@@ -293,22 +305,22 @@ public:
     }
 
 
-    int add(thread_entry_point entry_point,thread_entry_point custume_entry, bool is_main = false) {
+    int add(thread_entry_point entry_point, thread_entry_point custume_entry, bool is_main = false) {
         int index = get_next_index();
-        std::cout<<"IDX of add: "<<index<<std::endl;
-        Thread *new_thread = new Thread(entry_point, READY, is_main,custume_entry);
+        std::cout << "IDX of add: " << index << std::endl;
+        Thread *new_thread = new Thread(entry_point, READY, is_main, custume_entry);
 //        thread_entry_point custume_entry_point =   &this->decorate_entry_point;
 //        Thread *new_thread = new Thread(custume_entry_point, READY, is_main);
         if (index == MAX_THREAD_NUM) return FAIL;
         if (index == threads.size()) threads.push_back(new_thread); else threads[index] = new_thread;
-        if(!is_main){
+        if (!is_main) {
             add_to_ready(index);
         }
         return index;
     }
 
     int rr_cycle(bool dont_activate = false) {
-        std::cout<<"RR CYCLE, current active thread: "<<this->current_active_thread<<std::endl;
+        std::cout << "RR CYCLE, current active thread: " << this->current_active_thread << std::endl;
         this->quntums_passed++;
         this->wake_up_all();
         Thread *curr_thread = this->threads[this->current_active_thread];
@@ -320,17 +332,16 @@ public:
         // If thread just saved, load next thread;
         if (res == SUCCESS) {
             this->current_active_thread = this->ready.front();
-            std::cout<<"load_next_thread "<<this->current_active_thread<< std::endl;
+            std::cout << "load_next_thread " << this->current_active_thread << std::endl;
             this->ready.pop_front();
             curr_thread = this->threads[this->current_active_thread];
             curr_thread->schedule();
-            std::cout<<"Loading thread: "<<this->current_active_thread<<std::endl;
+            std::cout << "Loading thread: " << this->current_active_thread << std::endl;
             curr_thread->activate_thread();
         }
-        std::cout<<"Hello, I'm back! It's thread: "<<this->current_active_thread<<std::endl;
-        if (this->garbage_thread_id!=-1)
-        {
-            std::cout<<"New thread calling garbage collector"<< std::endl;
+        std::cout << "Hello, I'm back! It's thread: " << this->current_active_thread << std::endl;
+        if (this->garbage_thread_id != -1) {
+            std::cout << "New thread calling garbage collector" << std::endl;
             this->garbage_thread_handle();
         }
         return SUCCESS;
@@ -339,7 +350,7 @@ public:
     int block(int tid) {
         Thread *to_block = threads[tid];
         if (to_block->state != BLOCKED) erase_from_ready(tid);
-        std::cout<<"Thread manager telling thread "<<tid<<" to block itself"<<std::endl;
+        std::cout << "Thread manager telling thread " << tid << " to block itself" << std::endl;
         int res = to_block->block();
         if (res == FAIL) {
             // todo - print error
@@ -365,7 +376,7 @@ public:
         if (is_over == 1) {
             return this->end_program();
         }
-        std::cout<<"Delete thread "<<tid<<std::endl;
+        std::cout << "Delete thread " << tid << std::endl;
 //        if (this->garbage_thread_id!=-1)
 //        {
 //            std::cout<<"New thread calling garbage collector"<< std::endl;
@@ -373,15 +384,15 @@ public:
 //        }
         this->garbage_thread_id = tid;
         if (to_terminate->state == RUNNING) {
-            std::cout<<"Thread "<<tid<<" deleting itself"<<std::endl;
+            std::cout << "Thread " << tid << " deleting itself" << std::endl;
             this->rr_cycle();
         }
         return this->garbage_thread_handle();
     }
 
     int put_to_sleep(int wake_up_time) {
-        std::cout<<"Thread "<< this->current_active_thread<<" goes to sleep until "<<
-        wake_up_time<<", current quantum: "<<this->quntums_passed<< std::endl;
+        std::cout << "Thread " << this->current_active_thread << " goes to sleep until " <<
+                  wake_up_time << ", current quantum: " << this->quntums_passed << std::endl;
         Thread *to_sleep = threads[this->current_active_thread];
         int res = to_sleep->sleep(wake_up_time);
         if (res == FAIL) {
@@ -437,12 +448,6 @@ void timer_handler(int sig) {
     manager->time_handler(sig);
 }
 
-int throwError(int errorId)
-{
-    std::cout<<"Throw some error"<<std::endl;
-    return -1;
-};
-
 // todo: Handle errors, mask signals every function;
 
 
@@ -457,11 +462,10 @@ void initTimer(int usecs) {
     timer.it_value.tv_usec = usecs;        // first time interval, microseconds part
     timer.it_interval.tv_sec = 0;    // following time intervals, seconds part
     timer.it_interval.tv_usec = usecs;    // following time intervals, microseconds part
-    if (setitimer(ITIMER_VIRTUAL, &timer, nullptr))
-    {
+    if (setitimer(ITIMER_VIRTUAL, &timer, nullptr)) {
         printf("setitimer error.");
     }
-    std::cout<<"\nTimer is ready"<< std::endl;
+    std::cout << "\nTimer is ready" << std::endl;
 }
 
 void resetTimer() {
@@ -472,15 +476,15 @@ void resetTimer() {
 }
 
 int uthread_init(int quantum_usecs) {
-    sigprocmask(0, nullptr,&current_mask);
+    sigprocmask(0, nullptr, &current_mask);
     sigfillset(&all_mask);
-    sigprocmask(SIG_BLOCK,&all_mask,&current_mask);
+    sigprocmask(SIG_BLOCK, &all_mask, &current_mask);
     if (quantum_usecs < 1) return FAIL;
     initTimer(quantum_usecs);
     usecs = quantum_usecs;
     manager = new ThreadManager(quantum_usecs);
-    manager->add(nullptr,nullptr, true);
-    sigprocmask(SIG_SETMASK,&current_mask, nullptr);
+    manager->add(nullptr, nullptr, true);
+    sigprocmask(SIG_SETMASK, &current_mask, nullptr);
     return SUCCESS;
 }
 
@@ -492,100 +496,98 @@ bool is_valid_tid(int tid, bool include_zero) {
 }
 
 // Decoration used to remember to delete previous thread if necessary
-void decorate_entry_point()
-{
-    if (manager->garbage_thread_id!=-1)
-    {
-        std::cout<<"New thread calling garbage collector"<< std::endl;
+void decorate_entry_point() {
+    if (manager->garbage_thread_id != -1) {
+        std::cout << "New thread calling garbage collector" << std::endl;
         manager->garbage_thread_handle();
     }
     manager->threads[manager->current_active_thread]->entry_point();
 }
 
 int uthread_spawn(thread_entry_point entry_point) {
-    sigprocmask(0, nullptr,&current_mask);
+    sigprocmask(0, nullptr, &current_mask);
     sigfillset(&all_mask);
-    sigprocmask(SIG_BLOCK,&all_mask,&current_mask);
-    int res =  manager->add(entry_point,&decorate_entry_point);
-    sigprocmask(SIG_SETMASK,&current_mask, nullptr);
+    sigprocmask(SIG_BLOCK, &all_mask, &current_mask);
+    int res = manager->add(entry_point, &decorate_entry_point);
+    sigprocmask(SIG_SETMASK, &current_mask, nullptr);
     return res;
 }
 
 int uthread_terminate(int tid) {
-    sigprocmask(0, nullptr,&current_mask);
+    sigprocmask(0, nullptr, &current_mask);
     sigfillset(&all_mask);
-    sigprocmask(SIG_BLOCK,&all_mask,&current_mask);
-    if (!is_valid_tid(tid, true)) return throwError(1);
+    sigprocmask(SIG_BLOCK, &all_mask, &current_mask);
+    if (!is_valid_tid(tid, true)) return throwError(LIBRARY_ERROR, INVALID_TID_MESSAGE);
     if (manager->current_active_thread == tid) resetTimer();
     int res = manager->terminate(tid);
     if (res == 2) {
         delete manager;
-        sigprocmask(SIG_SETMASK,&current_mask, nullptr);
-        std::cout<<"Terminated prgoram"<<std::endl;
+        sigprocmask(SIG_SETMASK, &current_mask, nullptr);
+        std::cout << "Terminated prgoram" << std::endl;
         exit(0);
     }
-    sigprocmask(SIG_SETMASK,&current_mask, nullptr);
+    sigprocmask(SIG_SETMASK, &current_mask, nullptr);
     return res;
 }
 
 int uthread_block(int tid) {
-    sigprocmask(0, nullptr,&current_mask);
+    sigprocmask(0, nullptr, &current_mask);
     sigfillset(&all_mask);
-    sigprocmask(SIG_BLOCK,&all_mask,&current_mask);
-    if (!is_valid_tid(tid, false)) return throwError(2);
+    sigprocmask(SIG_BLOCK, &all_mask, &current_mask);
+    if (!is_valid_tid(tid, false)) return throwError(LIBRARY_ERROR, INVALID_TID_MESSAGE);
     if (manager->current_active_thread == tid) resetTimer();
-    std::cout<<"Blocking thread "<<tid<<", called thread manager"<<std::endl;
-    int res =  manager->block(tid);
-    sigprocmask(SIG_SETMASK,&current_mask, nullptr);
+    std::cout << "Blocking thread " << tid << ", called thread manager" << std::endl;
+    int res = manager->block(tid);
+    sigprocmask(SIG_SETMASK, &current_mask, nullptr);
     return res;
 }
 
 int uthread_resume(int tid) {
-    sigprocmask(0, nullptr,&current_mask);
+    sigprocmask(0, nullptr, &current_mask);
     sigfillset(&all_mask);
-    sigprocmask(SIG_BLOCK,&all_mask,&current_mask);
-    if (!is_valid_tid(tid, true)) return throwError(3);
+    sigprocmask(SIG_BLOCK, &all_mask, &current_mask);
+    if (!is_valid_tid(tid, true)) return throwError(LIBRARY_ERROR, INVALID_TID_MESSAGE);
     int res = manager->resume(tid);
-    sigprocmask(SIG_SETMASK,&current_mask, nullptr);
+    sigprocmask(SIG_SETMASK, &current_mask, nullptr);
     return res;
 }
 
 int uthread_sleep(int num_quantums) {
-    sigprocmask(0, nullptr,&current_mask);
+    sigprocmask(0, nullptr, &current_mask);
     sigfillset(&all_mask);
-    sigprocmask(SIG_BLOCK,&all_mask,&current_mask);
-    if (manager->current_active_thread == 0) return throwError(4);
-    int res =  manager->put_to_sleep(1+num_quantums + manager->quntums_passed);
-    sigprocmask(SIG_SETMASK,&current_mask, nullptr);
+    sigprocmask(SIG_BLOCK, &all_mask, &current_mask);
+    if (manager->current_active_thread == 0) return throwError(LIBRARY_ERROR, MAIN_THREAD_SLEEP_MESSAGE);
+    int res = manager->put_to_sleep(1 + num_quantums + manager->quntums_passed);
+    sigprocmask(SIG_SETMASK, &current_mask, nullptr);
     return res;
 }
 
 int uthread_get_tid() {
-    sigprocmask(0, nullptr,&current_mask);
+    sigprocmask(0, nullptr, &current_mask);
     sigfillset(&all_mask);
-    sigprocmask(SIG_BLOCK,&all_mask,&current_mask);
-    int res =  manager->current_active_thread;
-    sigprocmask(SIG_SETMASK,&current_mask, nullptr);
+    sigprocmask(SIG_BLOCK, &all_mask, &current_mask);
+    int res = manager->current_active_thread;
+    sigprocmask(SIG_SETMASK, &current_mask, nullptr);
     return res;
 }
 
 int uthread_get_total_quantums() {
-    sigprocmask(0, nullptr,&current_mask);
+    sigprocmask(0, nullptr, &current_mask);
     sigfillset(&all_mask);
-    sigprocmask(SIG_BLOCK,&all_mask,&current_mask);
-    int res =  manager->quntums_passed;
-    sigprocmask(SIG_SETMASK,&current_mask, nullptr);
+    sigprocmask(SIG_BLOCK, &all_mask, &current_mask);
+    int res = manager->quntums_passed;
+    sigprocmask(SIG_SETMASK, &current_mask, nullptr);
     return res;
 }
 
 int uthread_get_quantums(int tid) {
 //    std::cout<<"Get quntums of thread: "<<tid<<std::endl;
-    sigprocmask(0, nullptr,&current_mask);
+    sigprocmask(0, nullptr, &current_mask);
     sigfillset(&all_mask);
-    sigprocmask(SIG_BLOCK,&all_mask,&current_mask);
-    if (!is_valid_tid(tid, true)) return throwError(5);
-    int res =  manager->threads[tid]->quantums;
-    sigprocmask(SIG_SETMASK,&current_mask, nullptr);
+    sigprocmask(SIG_BLOCK, &all_mask, &current_mask);
+    if (!is_valid_tid(tid, true)) return throwError(LIBRARY_ERROR, INVALID_TID_MESSAGE);
+    int res = manager->threads[tid]->quantums;
+    sigprocmask(SIG_SETMASK, &current_mask, nullptr);
 //    std::cout<<"Quntums of thread: "<<res<<std::endl;
     return res;
 }
